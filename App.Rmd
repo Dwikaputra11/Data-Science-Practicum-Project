@@ -9,6 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+### 1. Import Library
 ```{r}
 library(tm)
 library(wordcloud2)
@@ -20,12 +21,94 @@ library(wordcloud)
 library(shiny)
 library(ggplot2)
 library(plotly)
-```
-```{r}
 library(e1071)
 library(caret)
 library(syuzhet)
+library(here)
+library(readxl)
+library(vroom)
+library(tm)
+```
 
+### 2. Preprocesing Data
+Disini kita akan melakukan proses cleaning data agar data yang diproses bersih terhadap nilai-nilai null,karakter yang tidak diperlukan, dll.
+```{r}
+data <- read_excel(path = here('data-raw/review_gwk.xlsx'))
+review <- data$review
+review.vector <- Corpus(VectorSource(review))
+removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+reviewclean <- tm_map(review.vector, removeURL)
+removeNL <- function(y) gsub("\n", " ", y)
+reviewclean <- tm_map(review.vector, removeNL)
+replacecomma <- function(y) gsub(",", "", y)
+reviewclean <- tm_map(reviewclean, replacecomma)
+removetitik2 <- function(y) gsub(":", "", y)
+reviewclean <- tm_map(reviewclean, removetitik2)
+removetitikkoma <- function(y) gsub(";", " ", y)
+reviewclean <- tm_map(reviewclean, removetitikkoma)
+removeamp <- function(y) gsub("&amp", "", y)
+reviewclean <- tm_map(reviewclean, removeamp)
+removeUN <- function(z) gsub("@\\w+", "", z)
+reviewclean <- tm_map(reviewclean, removeUN)
+remove.all <- function(xy) gsub("[^[:alpha:][:space:]]*", "", xy)
+reviewclean <- tm_map(reviewclean, remove.all)
+remove.emoticon <- function(x) gsub("[^\x01-\x7F]", "", x)
+reviewclean <- tm_map(reviewclean, remove.emoticon)
+reviewclean <- tm_map(reviewclean, removePunctuation)
+reviewclean <- tm_map(reviewclean, tolower)
+
+frame.data <- data.frame(text=unlist(sapply(reviewclean,`[`)), stringsAsFactors = F)
+View(frame.data)
+write.csv(frame.data, file = 'Review_GWK_Clean.csv')
+```
+
+###3. Labeling Data
+Disini kita akan melabeli kalimat-kalimat apakah termasuk kalimat negatif atau positif 
+```{r}
+data.clean<-read.csv("Review_GWK_Clean.csv",header=T)
+
+#skoring
+kata.positif <- scan("positive-words.txt",what="character",comment.char=";")
+kata.negatif <- scan("negative-words.txt",what="character",comment.char=";")
+score.sentiment = function(sentence, positif, negatif,
+                           .progress='none')
+{
+  require(plyr)
+  require(stringr)
+  scores = laply(sentence, function(kalimat, positif,
+                                    negatif) {
+    kalimat = gsub('[[:punct:]]', '', kalimat)
+    kalimat = gsub('[[:cntrl:]]', '', kalimat)
+    kalimat = gsub('\\d+', '', kalimat)
+    kalimat = tolower(kalimat)
+    list.kata = str_split(kalimat, '\\s+')
+    kata2 = unlist(list.kata)
+    positif.matches = match(kata2, kata.positif)
+    negatif.matches = match(kata2, kata.negatif)
+    positif.matches = !is.na(positif.matches)
+    negatif.matches = !is.na(negatif.matches)
+    score = sum(positif.matches) - (sum(negatif.matches))
+    return(score)
+  }, kata.positif, kata.negatif, .progress=.progress )
+  
+  scores.df = data.frame(score=scores, text=sentence)
+  return(scores.df)}
+
+hasil = score.sentiment(data.clean$text, kata.positif, kata.negatif)
+
+#CONVERT SCORE TO SENTIMENT
+hasil$klasifikasi<- ifelse(hasil$score<0, "Negatif",ifelse(hasil$score==0,"Netral","Positif"))
+hasil$klasifikasi
+View(hasil)
+
+#EXCHANGE ROW SEQUENCE
+data <- hasil[c(3,1,2)] #ubah urutan kolom
+View(data)
+write.csv(data, file = "labeling.csv")
+```
+
+###4. Analisis emosi dalam text dengan NRC Sentiment 
+```{r}
 review.data <- read.csv("Review_GWK_Clean.csv", stringsAsFactors = F)
 review <- as.character(review.data$text)
 s <- get_nrc_sentiment(review)
@@ -36,11 +119,13 @@ a <- barplot(colSums(s), col=rainbow(10),ylab='count',main='Analisis sentimen GW
 brplt <- a
 ```
 
+### Metode Naive Bayes
 ```{r}
 require(corpus)
 
 
-data.frame<-read.csv("Review_GWK_Clean.csv",stringsAsFactors = F)
+data.frame<-read.csv("labeling.csv",stringsAsFactors = F)
+data.frame$klasifikasi <- factor(data.frame$klasifikasi)
 glimpse(data.frame)
 set.seed(20)
 data.frame<-data.frame[sample(nrow(data.frame)),]
@@ -61,78 +146,56 @@ corpus.clean<-corpus%>%
 
 dtm<-DocumentTermMatrix(corpus.clean)
 inspect(dtm[1:10,1:20])
-df.train<-data.frame[1:50,]
-df.test<-data.frame[51:100,]                                            
-dtm.train<-dtm[1:50,]
-dtm.test<-dtm[51:100,]
-corpus.clean.train<-corpus.clean[1:50]
-corpus.clean.test<-corpus.clean[51:100]
+
+df.train<-data.frame[1:340,]
+df.test<-data.frame[341:680,]   
+
+dtm.train<-dtm[1:340,]
+dtm.test<-dtm[341:680,]
+
+corpus.clean.train<-corpus.clean[1:340]
+corpus.clean.test<-corpus.clean[341:680]
+
 dim(dtm.train)
 
 fivefreq<-findFreqTerms(dtm.train,5)
 length(fivefreq)
+
 dtm.train.nb<-DocumentTermMatrix(corpus.clean.train,control = list(dictionary=fivefreq))
-#dim(dtm.train.nb)
+dim(dtm.train.nb)
+
 dtm.test.nb<-DocumentTermMatrix(corpus.clean.test,control = list(dictionary=fivefreq))
 dim(dtm.test.nb)
 
+#Boolan Naive Bayes
 convert_count <- function(x){
     y<-ifelse(x>0,1,0)
     y<-factor(y,levels=c(0,1),labels=c("no","yes"))
     y
 }
+
+#Naive Bayes Model
 trainNB<-apply(dtm.train.nb,2,convert_count)
-testNB<-apply(dtm.test.nb,1,convert_count)
-wordcloud(corpus.clean,min.freq = 4,max.words=100,random.order=F,colors=brewer.pal(8,"Dark2"))
-kalimat2<-read.csv("Review_GWK_Clean.csv",header=T)
+testNB<-apply(dtm.test.nb,2,convert_count)
+#Training
+classifier <- naiveBayes(trainNB, df.train$klasifikasi, laplace = 1)
 
-#skoring
-kata.positif <- scan("positive-words.txt",what="character",comment.char=";")
-kata.negatif <- scan("negative-words.txt",what="character",comment.char=";")
-score.sentiment = function(kalimat2, positif, negatif,
-                           .progress='none')
-{
-  require(plyr)
-  require(stringr)
-  scores = laply(kalimat2, function(kalimat, positif,
-                                    negatif) {
-    kalimat = gsub('[[:punct:]]', '', kalimat)
-    kalimat = gsub('[[:cntrl:]]', '', kalimat)
-    kalimat = gsub('\\d+', '', kalimat)
-    kalimat = tolower(kalimat)
-    list.kata = str_split(kalimat, '\\s+')
-    kata2 = unlist(list.kata)
-    positif.matches = match(kata2, kata.positif)
-    negatif.matches = match(kata2, kata.negatif)
-    positif.matches = !is.na(positif.matches)
-    negatif.matches = !is.na(negatif.matches)
-    score = sum(positif.matches) - (sum(negatif.matches))
-    return(score)
-  }, kata.positif, kata.negatif, .progress=.progress )
-  
-  scores.df = data.frame(score=scores, text=kalimat2)
-  return(scores.df)}
+#Use the NB classifier we built to make predictions on the test set
+pred <- predict(classifier, testNB)
 
-hasil = score.sentiment(kalimat2$text, kata.positif, kata.negatif)
+#Create a truth table by tabulating the predicted class labels with the actual predicted class labels with the actual class labels
+NB_table=table("Prediction"= pred, "Actual" = df.test$klasifikasi)
+NB_table
 
-#mengubah nilai score menjadi sentimen
-
-hasil$klasifikasi<- ifelse(hasil$score<0, "Negatif",ifelse(hasil$score==0,"Netral","Positif"))
-hasil$klasifikasi
-
-#menukar urutan baris
-
-data <- hasil[c(3,1,2)]
-
-#View(data)
-
-write.csv(data, file = "viewdata.csv")
+#confussion Matrix
+conf.matNB <- confusionMatrix(pred, df.test$klasifikasi)
+conf.matNB
 ```
 
 ```{r}
 library(syuzhet) #untuk membaca fungsi get_nrc
 
-dataLabel<- read.csv("viewdata.csv")
+dataLabel<- read.csv("labeling.csv")
 ui <- fluidPage(
     titlePanel("Analisis sentimen GWK"),
         mainPanel(
@@ -155,13 +218,17 @@ server <- function(input, output) {
         DT::datatable(dataLabel, options = list(lengthChange = FALSE))
     })
     
-    output$scatterplot <- renderPlot({produk_dataset<-read.csv("Review_GWK_Clean.csv",stringsAsFactors = FALSE)
-      review <-as.character(produk_dataset$text)
-      s<-get_nrc_sentiment(review)
-      review_combine<-cbind(produk_dataset$text,s)
-      par(mar=rep(3,4))
-      barplot(colSums(s),col= rainbow(10),ylab='count',main='Analisis sentimen GWK')
-          }, height=400)
+    output$scatterplot <- renderPlot(
+      {
+        produk_dataset<-read.csv("Review_GWK_Clean.csv",stringsAsFactors = FALSE)
+        review <-as.character(produk_dataset$text)
+        s<-get_nrc_sentiment(review)
+        review_combine<-cbind(produk_dataset$text,s)
+        par(mar=rep(3,4))
+        barplot(colSums(s),col= rainbow(10),ylab='count',main='Analisis sentimen GWK')
+      }, 
+      height=400)
+    
     output$Wordcloud <- renderPlot({
      set.seed(20)
       data.frame<-data.frame[sample(nrow(data.frame)),]
