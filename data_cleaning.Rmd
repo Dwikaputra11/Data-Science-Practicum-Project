@@ -1,0 +1,47 @@
+---
+title: "Analisis Sentimen Objek Wisata GWK"
+author: "Kelompok 1"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(here)
+library(readxl)
+library(vroom)
+library(tm)
+```
+```{r}
+data <- read_excel(path = here('data-raw/review_gwk.xlsx'))
+review <- data$review
+review.vector <- Corpus(VectorSource(review))
+removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+reviewclean <- tm_map(review.vector, removeURL)
+removeNL <- function(y) gsub("\n", " ", y)
+reviewclean <- tm_map(review.vector, removeNL)
+replacecomma <- function(y) gsub(",", "", y)
+reviewclean <- tm_map(reviewclean, replacecomma)
+removetitik2 <- function(y) gsub(":", "", y)
+reviewclean <- tm_map(reviewclean, removetitik2)
+removetitikkoma <- function(y) gsub(";", " ", y)
+reviewclean <- tm_map(reviewclean, removetitikkoma)
+removeamp <- function(y) gsub("&amp", "", y)
+reviewclean <- tm_map(reviewclean, removeamp)
+removeUN <- function(z) gsub("@\\w+", "", z)
+reviewclean <- tm_map(reviewclean, removeUN)
+remove.all <- function(xy) gsub("[^[:alpha:][:space:]]*", "", xy)
+reviewclean <- tm_map(reviewclean, remove.all)
+remove.emoticon <- function(x) gsub("[^\x01-\x7F]", "", x)
+reviewclean <- tm_map(reviewclean, remove.emoticon)
+reviewclean <- tm_map(reviewclean, removePunctuation)
+reviewclean <- tm_map(reviewclean, tolower)
+
+frame.data <- data.frame(text=unlist(sapply(reviewclean,`[`)), stringsAsFactors = F)
+View(frame.data)
+write.csv(frame.data, file = 'Review_GWK_Clean.csv')
+
+```
